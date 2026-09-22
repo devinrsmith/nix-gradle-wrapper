@@ -19,6 +19,11 @@ A reusable Nix function that makes a Gradle-wrapper-based project's dev shell
   hw.memsize`) rather than Gradle's own CPU-core-based default, which can
   OOM a machine with many cores but modest memory
   (see [gradle/gradle#14431](https://github.com/gradle/gradle/issues/14431)).
+- **Suppresses Gradle's one-time "Welcome to Gradle" banner**
+  (`org.gradle.welcome=never`) -- since `GRADLE_USER_HOME` is isolated
+  per-project rather than a real, persistent `~/.gradle`, that banner would
+  otherwise reappear on every fresh isolated home instead of showing only
+  once per machine.
 
 Extracted from a project-specific `nix/gradle-wrapper.nix` and generalized
 (parameterized what was previously hardcoded to one project's own naming
@@ -155,7 +160,7 @@ JDK + Gradle wrapper script + project, which is out of scope for a fast
 `nix flake check` -- treat it as a manual/downstream smoke test against a
 real consuming project's checkout instead.
 
-
+## Caveats (inherited from the original, unchanged by generalizing it)
 
 - Gradle's wrapper on-disk layout
   (`$GRADLE_USER_HOME/wrapper/dists/<zipBase>/<hash>/<dirName>`, where

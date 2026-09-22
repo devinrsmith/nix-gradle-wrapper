@@ -61,7 +61,10 @@ package with its own compile step.
      namespaced (`$XDG_CACHE_HOME/<name>-nix-gradle-home`), symlink-backed directory that mirrors
      everything from the real `~/.gradle` *except* `gradle.properties` — so caches/daemon/etc.
      aren't duplicated, but the toolchain settings are shell-local. It writes that isolated
-     `gradle.properties` with `org.gradle.java.installations.auto-detect=false` and
+     `gradle.properties` with `org.gradle.welcome=never` (suppresses Gradle's one-time "Welcome to
+     Gradle" banner, which would otherwise reappear on every fresh isolated home rather than
+     showing once per machine, since `GRADLE_USER_HOME` here is per-project, not the real
+     persistent `~/.gradle`), `org.gradle.java.installations.auto-detect=false`, and
      `...auto-download=false` (confirmed empirically: these only take effect as a Gradle project
      property / `gradle.properties` file, not `GRADLE_OPTS`/`ORG_GRADLE_PROJECT_*` env vars), plus
      a computed `org.gradle.workers.max` (total memory, minus `daemonMemBytes` and `otherMemBytes`,

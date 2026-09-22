@@ -61,6 +61,8 @@ pkgs.runCommand testName
       echo "FAIL: $GRADLE_USER_HOME/gradle.properties was not written"
       exit 1
     fi
+    grep -q '^org.gradle.welcome=never$' "$GRADLE_USER_HOME/gradle.properties" \
+      || { echo "FAIL: welcome=never missing from gradle.properties"; exit 1; }
     grep -q '^org.gradle.java.installations.auto-detect=false$' "$GRADLE_USER_HOME/gradle.properties" \
       || { echo "FAIL: auto-detect=false missing from gradle.properties"; exit 1; }
     grep -q '^org.gradle.java.installations.auto-download=false$' "$GRADLE_USER_HOME/gradle.properties" \
