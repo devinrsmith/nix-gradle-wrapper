@@ -82,7 +82,19 @@ package with its own compile step.
      sections — rather than duplicated here as nixpkgs-Darwin-layout-specific logic. Plus a computed
      `org.gradle.workers.max` (total memory, minus `daemonMemBytes` and `otherMemBytes`, divided by
      `perWorkerMemBytes`; best-effort across Linux `/proc/meminfo` and macOS `sysctl
-     hw.memsize`, silently skipped if memory can't be determined).
+     hw.memsize`, silently skipped if memory can't be determined). Separately (not a
+     `gradle.properties` key, an env var), also manages `GRADLE_ENCRYPTION_KEY`: toolchain
+     isolation's own symlinked `caches/` breaks the Configuration Cache's default keystore
+     (`$GRADLE_USER_HOME/caches/<version>/cc-keystore` fails to open when `caches/` is a symlink,
+     independent of Gradle version — confirmed empirically), so a key is generated once (`head -c
+     32 /dev/urandom | base64`) and cached at `$_gradle_isolated_home/cc-encryption-key` — inside
+     the isolated home so it's already namespaced by `name` and persists/cleans up alongside it,
+     rather than a sibling file elsewhere — and reused on every later shell entry against the same
+     isolated home (regenerating it per entry would invalidate the configuration cache every
+     restart). Guarded on `[[ -z "${GRADLE_ENCRYPTION_KEY:-}" ]]` so an already-set value (a
+     caller's own secret-management flow) is never overridden. This is unconditional, not gated by
+     a parameter — no downside to setting it even when the caller never enables
+     `org.gradle.configuration-cache`, since Gradle simply ignores an unused env var.
   - `distUrl`/`distSha256`/`zipBase`/`dirName` are also exposed from the function, mainly so
     `tests/unit.nix` has something to assert on without ever building `distExtracted`.
 
@@ -91,19 +103,22 @@ package with its own compile step.
   `extraJdkHomes`/`org.gradle.java.installations.*`; [Build environment](https://docs.gradle.org/current/userguide/build_environment.html)
   is the full reference for everything else Gradle reads from that file (`org.gradle.java.home`
   among them, plus `org.gradle.jvmargs`, `org.gradle.parallel`, `org.gradle.caching`,
-  `org.gradle.configuration-cache`, etc.). This module intentionally writes only a narrow, specific
-  subset — it's not meant to become a general-purpose `gradle.properties` generator, so a new key
-  should have a concrete reason tied to what this module already does (vendoring/isolation/memory
-  sizing), not just "Gradle supports it."
+  `org.gradle.configuration-cache`, etc.); [Configuration Cache: secrets](https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:secrets)
+  documents `GRADLE_ENCRYPTION_KEY` specifically. This module intentionally writes only a narrow,
+  specific subset — it's not meant to become a general-purpose `gradle.properties`/build-environment
+  generator, so a new key should have a concrete reason tied to what this module already does
+  (vendoring/isolation/memory sizing), not just "Gradle supports it."
 - **`tests/unit.nix`** — pure eval-level tests over the parsing/unescaping/path-derivation logic
-  (colon-unescaping, `-all`/`-bin` suffix stripping, mirror URLs with ports, nested paths) and over
+  (colon-unescaping, `-all`/`-bin` suffix stripping, mirror URLs with ports, nested paths), over
   `extraJdkHomes`'/`javaHome`'s string-level effect on `isolatedHomeHook` (omitted when
-  empty/`null`, correctly written — comma-joined for `extraJdkHomes` — when not). Runs with fake,
-  never-fetched URLs and a placeholder sha256, since `pkgs.fetchurl` only touches the
-  network/verifies the hash when its derivation is actually *built*, not when merely constructed
-  during eval — so no fixture files or builds are needed here at all. A `throw` with a diff-style
-  report fails the check if any case doesn't match; otherwise returns a trivial `runCommand`
-  derivation so `nix flake check` has something to build.
+  empty/`null`, correctly written — comma-joined for `extraJdkHomes` — when not), and a smoke check
+  that `isolatedHomeHook` always contains the `GRADLE_ENCRYPTION_KEY` guard/generation logic (the
+  actual runtime behavior — reuse across entries, respecting a pre-set value — is only exercisable
+  for real in `tests/integration.nix` below). Runs with fake, never-fetched URLs and a placeholder
+  sha256, since `pkgs.fetchurl` only touches the network/verifies the hash when its derivation is
+  actually *built*, not when merely constructed during eval — so no fixture files or builds are
+  needed here at all. A `throw` with a diff-style report fails the check if any case doesn't match;
+  otherwise returns a trivial `runCommand` derivation so `nix flake check` has something to build.
 - **`tests/integration.nix`** — the one layer that does a real build: fetches
   `tests/fixtures/fake-gradle-9.9.9-bin.zip` (a tiny, committed stand-in "Gradle distribution", not
   a real one) via a `file://` URL, then actually *runs* `isolatedHomeHook` + `warmupHook` inside a
@@ -111,10 +126,12 @@ package with its own compile step.
   `GRADLE_USER_HOME`, `gradle.properties` contents (including `installations.paths` against two
   real throwaway fixture directories passed as `extraJdkHomes`, and `java.home` against a third
   passed as `javaHome`), and wrapper-cache directory layout are exactly what a real `./gradlew`
-  would look for. Notably references the fixture zip via `"${self}/..."` (the whole flake source,
-  already one store copy) rather than a fresh `${./relative/path}` interpolation — the latter would
-  re-add the file to the store as `<hash>-<basename>`, corrupting `zipBase`/`dirName`'s parsing of
-  the URL's last path segment.
+  would look for. Also runs `isolatedHomeHook` a second and third time in the same sandbox to prove
+  `GRADLE_ENCRYPTION_KEY` is stable across re-entry (not regenerated) and that an already-set value
+  is never overridden. Notably references the fixture zip via `"${self}/..."` (the whole flake
+  source, already one store copy) rather than a fresh `${./relative/path}` interpolation — the
+  latter would re-add the file to the store as `<hash>-<basename>`, corrupting
+  `zipBase`/`dirName`'s parsing of the URL's last path segment.
   - **Not covered by either test layer**: an actual `./gradlew` invocation proving it finds the
     vendored distribution and skips its own download. That needs a real JDK + Gradle wrapper
     script + project and is treated as a manual/downstream smoke test instead (see README.md's

@@ -116,5 +116,39 @@ pkgs.runCommand testName
       exit 1
     fi
 
+    # GRADLE_ENCRYPTION_KEY should be set (sidesteps the configuration
+    # cache keystore, which can't open against a symlinked caches/ dir --
+    # see isolatedHomeHook's comment) and its backing file should live
+    # inside the isolated home, not some other location.
+    if [[ -z "$GRADLE_ENCRYPTION_KEY" ]]; then
+      echo "FAIL: GRADLE_ENCRYPTION_KEY was not set"
+      exit 1
+    fi
+    if [[ ! -s "$GRADLE_USER_HOME/cc-encryption-key" ]]; then
+      echo "FAIL: $GRADLE_USER_HOME/cc-encryption-key was not created"
+      exit 1
+    fi
+
+    # Re-running the hook (a second shell entry against the same isolated
+    # home) must reuse the same key rather than regenerating it -- a fresh
+    # key every shell entry would invalidate the configuration cache on
+    # every restart, defeating the point of it.
+    first_key="$GRADLE_ENCRYPTION_KEY"
+    unset GRADLE_ENCRYPTION_KEY
+    ${gradleWrapper.isolatedHomeHook}
+    if [[ "$GRADLE_ENCRYPTION_KEY" != "$first_key" ]]; then
+      echo "FAIL: GRADLE_ENCRYPTION_KEY changed across a second hook run"
+      exit 1
+    fi
+
+    # An already-set GRADLE_ENCRYPTION_KEY (the caller's own
+    # secret-management flow, say) must never be overridden.
+    export GRADLE_ENCRYPTION_KEY="caller-supplied-key"
+    ${gradleWrapper.isolatedHomeHook}
+    if [[ "$GRADLE_ENCRYPTION_KEY" != "caller-supplied-key" ]]; then
+      echo "FAIL: an already-set GRADLE_ENCRYPTION_KEY was overridden (got $GRADLE_ENCRYPTION_KEY)"
+      exit 1
+    fi
+
     echo "nix-gradle-wrapper integration test passed" > $out
   ''

@@ -306,6 +306,35 @@ let
         echo "org.gradle.workers.max=$_gradle_workers_max"
       fi
     } > "$_gradle_isolated_home/gradle.properties"
+
+    # Gradle's Configuration Cache (org.gradle.configuration-cache=true)
+    # encrypts its on-disk entries with a key it keeps in a keystore under
+    # $GRADLE_USER_HOME/caches/<version>/cc-keystore -- that keystore fails
+    # to open ("Could not open Gradle Configuration Cache keystore")
+    # whenever caches/ is itself a symlink, independent of Gradle version --
+    # which is exactly what this hook sets up above (the `ln -sfn` onto
+    # `caches` a few lines up). GRADLE_ENCRYPTION_KEY sidesteps the keystore
+    # file entirely; it's Gradle's own documented workaround for
+    # "environments where the default keystore location is undesirable,
+    # such as when GRADLE_USER_HOME is shared across machines"
+    # (https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:secrets).
+    # Generated once and stored inside the isolated home (so it's already
+    # namespaced by `name`, persists across shell restarts the same way the
+    # isolated home itself does, and is cleaned up along with everything
+    # else if that directory is ever removed) rather than regenerated every
+    # shell entry, which would invalidate the configuration cache on every
+    # restart. Skipped if the caller already set GRADLE_ENCRYPTION_KEY
+    # themselves (their own secret-management flow, say) -- never
+    # overrides an explicit choice.
+    if [[ -z "''${GRADLE_ENCRYPTION_KEY:-}" ]]; then
+      _gradle_cc_key_file="$_gradle_isolated_home/cc-encryption-key"
+      if [[ ! -s "$_gradle_cc_key_file" ]]; then
+        ( umask 077; head -c 32 /dev/urandom | base64 > "$_gradle_cc_key_file" )
+      fi
+      export GRADLE_ENCRYPTION_KEY="$(cat "$_gradle_cc_key_file")"
+      unset _gradle_cc_key_file
+    fi
+
     export GRADLE_USER_HOME="$_gradle_isolated_home"
     unset _gradle_real_home _gradle_isolated_home _entry _name _d
     unset _gradle_daemon_bytes _gradle_other_bytes _gradle_per_worker_bytes

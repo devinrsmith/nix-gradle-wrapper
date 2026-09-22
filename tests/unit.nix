@@ -111,6 +111,15 @@ let
         (gwWith { javaHome = "/opt/jdk-21"; }).isolatedHomeHook;
       expected = true;
     };
+
+    "isolatedHomeHook always manages GRADLE_ENCRYPTION_KEY, guarded by an existing value" = {
+      expr =
+        let hook = (gwWith { }).isolatedHomeHook; in
+        lib.hasInfix ''if [[ -z "''${GRADLE_ENCRYPTION_KEY:-}" ]]; then'' hook
+        && lib.hasInfix "cc-encryption-key" hook
+        && lib.hasInfix "export GRADLE_ENCRYPTION_KEY=" hook;
+      expected = true;
+    };
   };
 
   results = lib.mapAttrsToList

@@ -24,6 +24,19 @@ A reusable Nix function that makes a Gradle-wrapper-based project's dev shell
   per-project rather than a real, persistent `~/.gradle`, that banner would
   otherwise reappear on every fresh isolated home instead of showing only
   once per machine.
+- **Works around a Configuration Cache keystore failure caused by the
+  isolation above.** Gradle's Configuration Cache normally keeps its
+  encryption key in a keystore file under
+  `$GRADLE_USER_HOME/caches/<version>/cc-keystore` -- that keystore fails
+  to open whenever `caches/` is itself a symlink, which is exactly what
+  toolchain isolation sets up (see above), independent of Gradle version.
+  `GRADLE_ENCRYPTION_KEY` sidesteps the keystore file entirely; it's
+  Gradle's own [documented
+  workaround](https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:secrets)
+  for exactly this kind of environment. A key is generated once and stored
+  inside the isolated home (so it persists across shell restarts instead
+  of invalidating the configuration cache on every one), and an
+  already-set `GRADLE_ENCRYPTION_KEY` is never overridden.
 
 Extracted from a project-specific `nix/gradle-wrapper.nix` and generalized
 (parameterized what was previously hardcoded to one project's own naming
@@ -184,7 +197,7 @@ gradleWrapper = import "${inputs.nix-gradle-wrapper}/gradle-wrapper.nix" {
 |---|---|---|
 | `distExtracted` | derivation | The unpacked Gradle distribution. Rarely needed directly -- `warmupHook` already wires it up. |
 | `warmupHook` | string (bash) | Pre-seeds `./gradlew`'s on-disk wrapper cache with `distExtracted`, so it's found instead of downloaded. |
-| `isolatedHomeHook` | string (bash) | Redirects `GRADLE_USER_HOME` to an isolated, symlink-backed directory and writes its `gradle.properties` (toolchain isolation + `workers.max`). Run this *before* `warmupHook` -- the warmup writes into whatever `GRADLE_USER_HOME` is current at that point. |
+| `isolatedHomeHook` | string (bash) | Redirects `GRADLE_USER_HOME` to an isolated, symlink-backed directory, writes its `gradle.properties` (toolchain isolation + `workers.max`), and manages `GRADLE_ENCRYPTION_KEY` (works around a Configuration Cache keystore failure that isolation itself causes -- see above). Run this *before* `warmupHook` -- the warmup writes into whatever `GRADLE_USER_HOME` is current at that point. |
 | `extraBuildInputs` | list of derivations | Packages the hooks above need on `PATH` (currently just `bc`, for the warmup hook's base36 conversion). |
 | `distUrl` | string | The resolved (unescaped) `distributionUrl`. Mainly for introspection/debugging and unit tests. |
 | `distSha256` | string | The `distributionSha256Sum` as read from `wrapperPropertiesFile`. |
@@ -249,9 +262,10 @@ real consuming project's checkout instead.
 This module deliberately writes only a narrow, specific set of
 `gradle.properties` keys (`org.gradle.welcome`, the toolchain
 isolation/custom-location properties, `org.gradle.workers.max`,
-`org.gradle.java.home`) -- it's not meant to become a general-purpose
-`gradle.properties` generator. If a real need comes up for something else
-Gradle reads from that file:
+`org.gradle.java.home`) plus one environment variable
+(`GRADLE_ENCRYPTION_KEY`) -- it's not meant to become a general-purpose
+`gradle.properties`/build-environment generator. If a real need comes up
+for something else Gradle reads from that file or environment:
 
 - [Toolchains](https://docs.gradle.org/current/userguide/toolchains.html) --
   what `extraJdkHomes` (custom locations) and the toolchain isolation
@@ -262,3 +276,7 @@ Gradle reads from that file:
   `org.gradle.jvmargs`, `org.gradle.parallel`, `org.gradle.caching`,
   `org.gradle.configuration-cache`, and more that this module doesn't
   currently touch.
+- [Configuration Cache: secrets](https://docs.gradle.org/current/userguide/configuration_cache.html#config_cache:secrets) --
+  `GRADLE_ENCRYPTION_KEY`, managed automatically by `isolatedHomeHook` (see
+  above) to work around the keystore-vs-symlink failure that toolchain
+  isolation itself causes.
