@@ -29,6 +29,12 @@ let
     name = "unit-test";
   };
 
+  gwWith = extraArgs: mkGradleWrapper ({
+    inherit pkgs;
+    wrapperPropertiesFile = fixture "https\\://services.gradle.org/distributions/gradle-9.7.1-all.zip";
+    name = "unit-test";
+  } // extraArgs);
+
   cases = {
     "unescapes the colon in a standard services.gradle.org URL" = {
       expr = (gw "https\\://services.gradle.org/distributions/gradle-9.7.1-all.zip").distUrl;
@@ -73,6 +79,25 @@ let
     "distSha256 is read through unmodified" = {
       expr = (gw "https\\://services.gradle.org/distributions/gradle-9.7.1-all.zip").distSha256;
       expected = fakeSha256;
+    };
+
+    "extraJdkHomes defaults to omitting installations.paths" = {
+      expr = lib.hasInfix "org.gradle.java.installations.paths" (gwWith { }).isolatedHomeHook;
+      expected = false;
+    };
+
+    "extraJdkHomes populates installations.paths, comma-joined" = {
+      expr = lib.hasInfix
+        ''echo "org.gradle.java.installations.paths=/opt/jdk-17,/opt/jdk-21"''
+        (gwWith { extraJdkHomes = [ "/opt/jdk-17" "/opt/jdk-21" ]; }).isolatedHomeHook;
+      expected = true;
+    };
+
+    "a single extraJdkHomes entry has no trailing comma" = {
+      expr = lib.hasInfix
+        ''echo "org.gradle.java.installations.paths=/opt/jdk-17"''
+        (gwWith { extraJdkHomes = [ "/opt/jdk-17" ]; }).isolatedHomeHook;
+      expected = true;
     };
   };
 

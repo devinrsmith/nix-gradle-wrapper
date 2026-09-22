@@ -32,9 +32,18 @@ let
 
   testName = "nix-gradle-wrapper-integration-test";
 
+  # Real (empty, fixture-only) directories, standing in for two additional
+  # JDK homes a consumer might pass via extraJdkHomes -- exercised for
+  # real here (unlike tests/unit.nix's string-level checks) to confirm the
+  # written property survives all the way from the Nix-level list into the
+  # actual gradle.properties file on disk.
+  fixtureJdkA = pkgs.runCommand "fake-jdk-a" { } "mkdir -p $out/bin";
+  fixtureJdkB = pkgs.runCommand "fake-jdk-b" { } "mkdir -p $out/bin";
+
   gradleWrapper = import ../gradle-wrapper.nix {
     inherit pkgs wrapperPropertiesFile;
     name = testName;
+    extraJdkHomes = [ "${fixtureJdkA}" "${fixtureJdkB}" ];
   };
 in
 pkgs.runCommand testName
@@ -67,6 +76,8 @@ pkgs.runCommand testName
       || { echo "FAIL: auto-detect=false missing from gradle.properties"; exit 1; }
     grep -q '^org.gradle.java.installations.auto-download=false$' "$GRADLE_USER_HOME/gradle.properties" \
       || { echo "FAIL: auto-download=false missing from gradle.properties"; exit 1; }
+    grep -q '^org.gradle.java.installations.paths=${fixtureJdkA},${fixtureJdkB}$' "$GRADLE_USER_HOME/gradle.properties" \
+      || { echo "FAIL: installations.paths missing/wrong in gradle.properties"; cat "$GRADLE_USER_HOME/gradle.properties"; exit 1; }
 
     # warmupHook should have pre-seeded the wrapper's on-disk cache in
     # exactly the layout ./gradlew's own PathAssembler looks for:

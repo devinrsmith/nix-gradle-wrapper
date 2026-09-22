@@ -45,8 +45,9 @@ package with its own compile step.
 ## Architecture
 
 - **`gradle-wrapper.nix`** — the entire implementation, a single `{ pkgs, wrapperPropertiesFile,
-  name, perWorkerMemBytes ?, daemonMemBytes ?, otherMemBytes ? }: { ... }` function. Internally it
-  does two independent things that are both worth understanding before editing either:
+  name, perWorkerMemBytes ?, daemonMemBytes ?, otherMemBytes ?, extraJdkHomes ? }: { ... }`
+  function. Internally it does two independent things that are both worth understanding before
+  editing either:
   1. **Distribution vendoring** (`distExtracted`, `warmupHook`): reads `distributionUrl`/
      `distributionSha256Sum` out of the consumer's `gradle-wrapper.properties` (the single source
      of truth — never duplicated), fetches+unpacks that exact zip via `pkgs.fetchurl` +
@@ -66,28 +67,37 @@ package with its own compile step.
      showing once per machine, since `GRADLE_USER_HOME` here is per-project, not the real
      persistent `~/.gradle`), `org.gradle.java.installations.auto-detect=false`, and
      `...auto-download=false` (confirmed empirically: these only take effect as a Gradle project
-     property / `gradle.properties` file, not `GRADLE_OPTS`/`ORG_GRADLE_PROJECT_*` env vars), plus
-     a computed `org.gradle.workers.max` (total memory, minus `daemonMemBytes` and `otherMemBytes`,
-     divided by `perWorkerMemBytes`; best-effort across Linux `/proc/meminfo` and macOS `sysctl
+     property / `gradle.properties` file, not `GRADLE_OPTS`/`ORG_GRADLE_PROJECT_*` env vars). When
+     `extraJdkHomes` is non-empty, also writes `org.gradle.java.installations.paths` as those paths
+     comma-joined — honored even with auto-detect/auto-download disabled (unlike the two settings
+     above, this one is resolved entirely at Nix eval time, not shell-hook runtime, since the list
+     is already known then; no bash-side list handling needed). Resolving a JDK *package* to the
+     path this option needs (Darwin's nixpkgs `temurin-bin` etc. need `${pkg.bundle}/Contents/Home`,
+     not the top-level symlink-farm `.home`) is deliberately left to the caller — see README.md's
+     "Multiple JDKs" section — rather than duplicated here as nixpkgs-Darwin-layout-specific logic.
+     Plus a computed `org.gradle.workers.max` (total memory, minus `daemonMemBytes` and
+     `otherMemBytes`, divided by `perWorkerMemBytes`; best-effort across Linux `/proc/meminfo` and macOS `sysctl
      hw.memsize`, silently skipped if memory can't be determined).
   - `distUrl`/`distSha256`/`zipBase`/`dirName` are also exposed from the function, mainly so
     `tests/unit.nix` has something to assert on without ever building `distExtracted`.
 - **`tests/unit.nix`** — pure eval-level tests over the parsing/unescaping/path-derivation logic
-  (colon-unescaping, `-all`/`-bin` suffix stripping, mirror URLs with ports, nested paths). Runs
-  with fake, never-fetched URLs and a placeholder sha256, since `pkgs.fetchurl` only touches the
-  network/verifies the hash when its derivation is actually *built*, not when merely constructed
-  during eval — so no fixture files or builds are needed here at all. A `throw` with a diff-style
-  report fails the check if any case doesn't match; otherwise returns a trivial `runCommand`
-  derivation so `nix flake check` has something to build.
+  (colon-unescaping, `-all`/`-bin` suffix stripping, mirror URLs with ports, nested paths) and over
+  `extraJdkHomes`' string-level effect on `isolatedHomeHook` (omitted when empty, comma-joined when
+  not). Runs with fake, never-fetched URLs and a placeholder sha256, since `pkgs.fetchurl` only
+  touches the network/verifies the hash when its derivation is actually *built*, not when merely
+  constructed during eval — so no fixture files or builds are needed here at all. A `throw` with a
+  diff-style report fails the check if any case doesn't match; otherwise returns a trivial
+  `runCommand` derivation so `nix flake check` has something to build.
 - **`tests/integration.nix`** — the one layer that does a real build: fetches
   `tests/fixtures/fake-gradle-9.9.9-bin.zip` (a tiny, committed stand-in "Gradle distribution", not
   a real one) via a `file://` URL, then actually *runs* `isolatedHomeHook` + `warmupHook` inside a
   sandboxed `runCommand` with a fake `$HOME`/`$XDG_CACHE_HOME`, and asserts the resulting
-  `GRADLE_USER_HOME`, `gradle.properties` contents, and wrapper-cache directory layout are exactly
-  what a real `./gradlew` would look for. Notably references the fixture zip via `"${self}/..."`
-  (the whole flake source, already one store copy) rather than a fresh `${./relative/path}`
-  interpolation — the latter would re-add the file to the store as `<hash>-<basename>`, corrupting
-  `zipBase`/`dirName`'s parsing of the URL's last path segment.
+  `GRADLE_USER_HOME`, `gradle.properties` contents (including `installations.paths` against two
+  real throwaway fixture directories passed as `extraJdkHomes`), and wrapper-cache directory layout
+  are exactly what a real `./gradlew` would look for. Notably references the fixture zip via
+  `"${self}/..."` (the whole flake source, already one store copy) rather than a fresh
+  `${./relative/path}` interpolation — the latter would re-add the file to the store as
+  `<hash>-<basename>`, corrupting `zipBase`/`dirName`'s parsing of the URL's last path segment.
   - **Not covered by either test layer**: an actual `./gradlew` invocation proving it finds the
     vendored distribution and skips its own download. That needs a real JDK + Gradle wrapper
     script + project and is treated as a manual/downstream smoke test instead (see README.md's

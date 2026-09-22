@@ -105,6 +105,42 @@ in
 }
 ```
 
+### Multiple JDKs
+
+Toolchain isolation (see "What this is not" above and `auto-detect`/
+`auto-download` in the Caveats below) means only the JDK actually running
+the shell is visible to Gradle by default -- a build step that deliberately
+targets a *different* JDK version (a multi-JDK CI matrix, a subproject
+pinned to an older/newer `javaLanguageVersion`) will otherwise fail with
+"no matching toolchain found".
+
+Pass `extraJdkHomes` to make specific additional JDKs available explicitly,
+without falling back to `auto-download=true` (which would need network
+access, defeating the point of vendoring everything through Nix):
+
+```nix
+gradleWrapper = import "${inputs.nix-gradle-wrapper}/gradle-wrapper.nix" {
+  inherit pkgs;
+  wrapperPropertiesFile = ./gradle/wrapper/gradle-wrapper.properties;
+  name = "my-project";
+  extraJdkHomes = [ pkgs.temurin-bin-17.home pkgs.temurin-bin-25.home ];
+};
+```
+
+On Linux, a JDK package's `.home` is normally already the right path. On
+Darwin, nixpkgs' `temurin-bin` (and similar) outputs are a symlink farm --
+the real, toolchain-detectable home is nested at
+`${pkg.bundle}/Contents/Home` (only present on Darwin; the Linux builder
+has no `bundle` attribute). Passing the wrong one doesn't break the build,
+but Gradle lists that JDK twice (once "detected", once via this path)
+under two different Location strings. A portable resolver:
+
+```nix
+jdkHome = pkg: if pkg ? bundle then "${pkg.bundle}/Contents/Home" else pkg.home;
+# ...
+extraJdkHomes = map jdkHome [ pkgs.temurin-bin-17 pkgs.temurin-bin-25 ];
+```
+
 ## Parameters
 
 | Parameter | Required | Default | Meaning |
@@ -115,6 +151,7 @@ in
 | `perWorkerMemBytes` | no | 4 GiB | Assumed worst-case heap for a single Gradle worker -- should match the consuming project's largest `-Xmx`-style setting for accurate `org.gradle.workers.max` sizing. |
 | `daemonMemBytes` | no | 1 GiB | Memory reserved for the Gradle daemon itself when computing `workers.max`. |
 | `otherMemBytes` | no | 2 GiB | Memory reserved for everything else running on the machine when computing `workers.max`. |
+| `extraJdkHomes` | no | `[ ]` | List of additional JDK home directory paths to make available as toolchains, beyond the JDK running the shell itself (which Gradle always considers, with or without this). Written verbatim into [`org.gradle.java.installations.paths`](https://docs.gradle.org/current/userguide/toolchains.html#sec:custom_loc), which Gradle honors even with auto-detect/auto-download disabled. Each entry must already be the JDK's true toolchain-detectable home -- resolving a nixpkgs JDK package to that path (including any Darwin nested-bundle handling) is the caller's job; see "Multiple JDKs" below. |
 
 ## Outputs
 
@@ -172,9 +209,11 @@ real consuming project's checkout instead.
 - Toolchain isolation (`auto-detect=false`/`auto-download=false`) means a
   build step that deliberately wants a *different* JDK than what the shell
   provides (e.g. a project's own multi-JDK CI matrix) will fail with "no
-  matching toolchain found" inside this shell. Pass
+  matching toolchain found" inside this shell, unless that JDK's home is
+  listed in `extraJdkHomes` (see "Multiple JDKs" above). Pass
   `-Porg.gradle.java.installations.auto-download=true` on the command line
-  to override that locally when you need to reproduce such a step.
+  instead if you just need to reproduce such a step once, without adding
+  it as a standing dependency.
 - These settings are written to a Gradle *project property* file
   (`gradle.properties`), not a JVM system property -- confirmed empirically
   that neither `GRADLE_OPTS=-D...` nor `ORG_GRADLE_PROJECT_<key>` env vars

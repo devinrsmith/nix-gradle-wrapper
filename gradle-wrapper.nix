@@ -48,6 +48,25 @@
 # machine.
 , daemonMemBytes ? 1 * 1024 * 1024 * 1024
 , otherMemBytes ? 2 * 1024 * 1024 * 1024
+# Extra JDK home directories to make available as toolchains, beyond the
+# JDK actually running the shell/daemon (which Gradle always considers
+# regardless of auto-detect -- see isolatedHomeHook below -- so it never
+# needs to be listed here). Written verbatim into
+# org.gradle.java.installations.paths (https://docs.gradle.org/current/userguide/toolchains.html#sec:custom_loc),
+# which Gradle honors even with auto-detect/auto-download disabled.
+#
+# Each entry must already be the JDK's true toolchain-detectable home --
+# resolving a nixpkgs JDK package to that path is the caller's job, not
+# this file's: on Linux a JDK package's `.home` is normally already
+# correct, but on Darwin nixpkgs' temurin-bin (etc.) outputs are a
+# symlink farm whose real content lives nested at
+# `${pkg.bundle}/Contents/Home` -- pointing Gradle at the top-level
+# `.home` instead lists the same JDK twice (once "detected", once via
+# this path) under two different Location strings. Callers already have
+# to work this out once for their own bootstrap JDK's JAVA_HOME (see any
+# consumer's devenv.nix); this just reuses that same resolution per extra
+# JDK rather than duplicating nixpkgs-Darwin-layout knowledge in here.
+, extraJdkHomes ? [ ]
 }:
 let
   # ---- Vendor the Gradle wrapper's distribution ------------------------
@@ -248,10 +267,14 @@ let
       # GRADLE_USER_HOME.
       echo "org.gradle.welcome=never"
       echo "org.gradle.java.installations.auto-detect=false"
-      # Only whatever JDK(s) this shell provides are available as a
-      # toolchain -- anything requesting another version will fail with
-      # "no matching toolchain found" here rather than downloading one.
+      # Only the JDK currently running this shell (always considered,
+      # regardless of auto-detect) plus whatever's explicitly listed in
+      # extraJdkHomes below are available as toolchains -- anything else
+      # will fail with "no matching toolchain found" here rather than
+      # downloading one.
       echo "org.gradle.java.installations.auto-download=false"
+      ${pkgs.lib.optionalString (extraJdkHomes != [ ]) ''
+      echo "org.gradle.java.installations.paths=${pkgs.lib.concatStringsSep "," extraJdkHomes}"''}
       if [[ -n "$_gradle_workers_max" ]]; then
         echo "# workers.max = (total_mem_bytes - daemon_bytes - other_bytes) / per_worker_bytes"
         echo "#             = ($_gradle_total_bytes - $_gradle_daemon_bytes - $_gradle_other_bytes) / $_gradle_per_worker_bytes"
