@@ -141,6 +141,30 @@ jdkHome = pkg: if pkg ? bundle then "${pkg.bundle}/Contents/Home" else pkg.home;
 extraJdkHomes = map jdkHome [ pkgs.temurin-bin-17 pkgs.temurin-bin-25 ];
 ```
 
+### Pinning the primary JVM
+
+Without `javaHome`, Gradle picks up whatever `java` resolves to via
+`JAVA_HOME`/`PATH` at the moment `./gradlew` starts the daemon -- fine as
+long as the calling shell's own `languages.java`-style setup is reliably in
+effect, but implicit: it depends on shell environment state rather than
+being written down anywhere.
+
+Pass `javaHome` (the same `jdkHome` resolver from "Multiple JDKs" above
+applies here too) to make that choice explicit via
+[`org.gradle.java.home`](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_system_properties)
+instead -- a *build environment* property (which JVM launches Gradle
+itself), distinct from the toolchain properties above (which JVM(s)
+subprojects compile/test against):
+
+```nix
+gradleWrapper = import "${inputs.nix-gradle-wrapper}/gradle-wrapper.nix" {
+  inherit pkgs;
+  wrapperPropertiesFile = ./gradle/wrapper/gradle-wrapper.properties;
+  name = "my-project";
+  javaHome = jdkHome bootstrapJdk; # the same JDK package driving languages.java
+};
+```
+
 ## Parameters
 
 | Parameter | Required | Default | Meaning |
@@ -151,7 +175,8 @@ extraJdkHomes = map jdkHome [ pkgs.temurin-bin-17 pkgs.temurin-bin-25 ];
 | `perWorkerMemBytes` | no | 4 GiB | Assumed worst-case heap for a single Gradle worker -- should match the consuming project's largest `-Xmx`-style setting for accurate `org.gradle.workers.max` sizing. |
 | `daemonMemBytes` | no | 1 GiB | Memory reserved for the Gradle daemon itself when computing `workers.max`. |
 | `otherMemBytes` | no | 2 GiB | Memory reserved for everything else running on the machine when computing `workers.max`. |
-| `extraJdkHomes` | no | `[ ]` | List of additional JDK home directory paths to make available as toolchains, beyond the JDK running the shell itself (which Gradle always considers, with or without this). Written verbatim into [`org.gradle.java.installations.paths`](https://docs.gradle.org/current/userguide/toolchains.html#sec:custom_loc), which Gradle honors even with auto-detect/auto-download disabled. Each entry must already be the JDK's true toolchain-detectable home -- resolving a nixpkgs JDK package to that path (including any Darwin nested-bundle handling) is the caller's job; see "Multiple JDKs" below. |
+| `extraJdkHomes` | no | `[ ]` | List of additional JDK home directory paths to make available as toolchains, beyond the JDK running the shell itself (which Gradle always considers, with or without this). Written verbatim into [`org.gradle.java.installations.paths`](https://docs.gradle.org/current/userguide/toolchains.html#sec:custom_loc), which Gradle honors even with auto-detect/auto-download disabled. Each entry must already be the JDK's true toolchain-detectable home -- resolving a nixpkgs JDK package to that path (including any Darwin nested-bundle handling) is the caller's job; see "Multiple JDKs" above. |
+| `javaHome` | no | `null` | The JDK home path to run the Gradle daemon itself with. Written as [`org.gradle.java.home`](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_system_properties) when set; omitted (falling back to whatever `JAVA_HOME`/`PATH` resolve to at daemon start, today's behavior) when left `null`. Same "already-resolved path, caller's job to get there" convention as `extraJdkHomes`; see "Pinning the primary JVM" above. |
 
 ## Outputs
 
@@ -218,3 +243,22 @@ real consuming project's checkout instead.
   (`gradle.properties`), not a JVM system property -- confirmed empirically
   that neither `GRADLE_OPTS=-D...` nor `ORG_GRADLE_PROJECT_<key>` env vars
   are honored for them.
+
+## See also
+
+This module deliberately writes only a narrow, specific set of
+`gradle.properties` keys (`org.gradle.welcome`, the toolchain
+isolation/custom-location properties, `org.gradle.workers.max`,
+`org.gradle.java.home`) -- it's not meant to become a general-purpose
+`gradle.properties` generator. If a real need comes up for something else
+Gradle reads from that file:
+
+- [Toolchains](https://docs.gradle.org/current/userguide/toolchains.html) --
+  what `extraJdkHomes` (custom locations) and the toolchain isolation
+  properties (`auto-detect`/`auto-download`) map to.
+- [Build environment](https://docs.gradle.org/current/userguide/build_environment.html) --
+  the full reference for every other `gradle.properties`-recognized
+  property (`org.gradle.java.home` among them), including
+  `org.gradle.jvmargs`, `org.gradle.parallel`, `org.gradle.caching`,
+  `org.gradle.configuration-cache`, and more that this module doesn't
+  currently touch.

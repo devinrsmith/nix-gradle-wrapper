@@ -67,6 +67,25 @@
 # consumer's devenv.nix); this just reuses that same resolution per extra
 # JDK rather than duplicating nixpkgs-Darwin-layout knowledge in here.
 , extraJdkHomes ? [ ]
+# The JDK home to run the Gradle build process (daemon) itself with, as an
+# already-resolved path string (same convention/Darwin caveat as
+# extraJdkHomes' entries above -- resolving a package to this path is the
+# caller's job). Written as org.gradle.java.home
+# (https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_system_properties),
+# a *build environment* property, not a toolchain one -- it picks which
+# JVM launches Gradle itself, independent of which JVM(s) subprojects
+# compile/test against.
+#
+# Optional and null by default: without it, Gradle falls back to
+# whatever `java` resolves to via JAVA_HOME/PATH at the moment the daemon
+# starts -- exactly today's (pre-org.gradle.java.home) behavior, so
+# leaving this unset changes nothing for existing callers. Setting it
+# makes that choice explicit and independent of shell environment state
+# (JAVA_HOME could be unset, overridden by some other tool, or simply
+# absent from a non-interactive invocation) -- recommended once a caller
+# already has the bootstrap JDK's resolved home in hand for their own
+# `languages.java`/JAVA_HOME setup anyway.
+, javaHome ? null
 }:
 let
   # ---- Vendor the Gradle wrapper's distribution ------------------------
@@ -266,6 +285,11 @@ let
       # only once per machine the way it would against a real, persistent
       # GRADLE_USER_HOME.
       echo "org.gradle.welcome=never"
+      ${pkgs.lib.optionalString (javaHome != null) ''
+      # Pins which JVM launches the Gradle daemon itself, independent of
+      # JAVA_HOME/PATH at the moment ./gradlew happens to run -- see
+      # javaHome's doc comment above.
+      echo "org.gradle.java.home=${javaHome}"''}
       echo "org.gradle.java.installations.auto-detect=false"
       # Only the JDK currently running this shell (always considered,
       # regardless of auto-detect) plus whatever's explicitly listed in

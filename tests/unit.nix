@@ -99,6 +99,18 @@ let
         (gwWith { extraJdkHomes = [ "/opt/jdk-17" ]; }).isolatedHomeHook;
       expected = true;
     };
+
+    "javaHome defaults to omitting org.gradle.java.home" = {
+      expr = lib.hasInfix "org.gradle.java.home" (gwWith { }).isolatedHomeHook;
+      expected = false;
+    };
+
+    "javaHome sets org.gradle.java.home when given" = {
+      expr = lib.hasInfix
+        ''echo "org.gradle.java.home=/opt/jdk-21"''
+        (gwWith { javaHome = "/opt/jdk-21"; }).isolatedHomeHook;
+      expected = true;
+    };
   };
 
   results = lib.mapAttrsToList

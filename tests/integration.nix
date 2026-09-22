@@ -39,11 +39,16 @@ let
   # actual gradle.properties file on disk.
   fixtureJdkA = pkgs.runCommand "fake-jdk-a" { } "mkdir -p $out/bin";
   fixtureJdkB = pkgs.runCommand "fake-jdk-b" { } "mkdir -p $out/bin";
+  # A third, distinct fixture for javaHome -- kept separate from
+  # extraJdkHomes' two above so each property's assertion below is
+  # unambiguous about which fixture it's checking.
+  fixtureJavaHome = pkgs.runCommand "fake-jdk-primary" { } "mkdir -p $out/bin";
 
   gradleWrapper = import ../gradle-wrapper.nix {
     inherit pkgs wrapperPropertiesFile;
     name = testName;
     extraJdkHomes = [ "${fixtureJdkA}" "${fixtureJdkB}" ];
+    javaHome = "${fixtureJavaHome}";
   };
 in
 pkgs.runCommand testName
@@ -72,6 +77,8 @@ pkgs.runCommand testName
     fi
     grep -q '^org.gradle.welcome=never$' "$GRADLE_USER_HOME/gradle.properties" \
       || { echo "FAIL: welcome=never missing from gradle.properties"; exit 1; }
+    grep -q '^org.gradle.java.home=${fixtureJavaHome}$' "$GRADLE_USER_HOME/gradle.properties" \
+      || { echo "FAIL: java.home missing/wrong in gradle.properties"; cat "$GRADLE_USER_HOME/gradle.properties"; exit 1; }
     grep -q '^org.gradle.java.installations.auto-detect=false$' "$GRADLE_USER_HOME/gradle.properties" \
       || { echo "FAIL: auto-detect=false missing from gradle.properties"; exit 1; }
     grep -q '^org.gradle.java.installations.auto-download=false$' "$GRADLE_USER_HOME/gradle.properties" \
